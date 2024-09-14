@@ -125,7 +125,7 @@ func (r *reader) Next() (d linedata, err error) {
 	for buf[i] == ' ' || buf[i] == '\t' {
 		i++
 	}
-	d.name = string(buf[i])
+	d.name = string(buf[i:])
 
 	buf, err = r.file.ReadUntil('\n')
 	if err != nil {
