@@ -31,35 +31,74 @@ type data struct {
 }
 
 type bufferedReader struct {
-	in     io.Reader
-	buffer []byte
-	ind    int
-	max    int
+	in io.Reader
+
+	buf1 []byte
+	buf2 []byte
+
+	oldBuffer []byte
+	buffer    []byte
+
+	ind int
 }
 
 func NewBuffered(in io.Reader) *bufferedReader {
-	return &bufferedReader{
-		in:     in,
-		buffer: make([]byte, bufferSize),
-		ind:    bufferSize,
-		max:    bufferSize,
+	b := &bufferedReader{
+		in:   in,
+		buf1: make([]byte, bufferSize),
+		buf2: make([]byte, bufferSize),
+		ind:  bufferSize,
 	}
+
+	b.oldBuffer = b.buf1
+	b.buffer = b.buf2
+
+	return b
 }
 
-func (b *bufferedReader) ReadByte() (byte, error) {
-	if b.ind == b.max {
-		n, err := b.in.Read(b.buffer)
-		if err != nil {
-			return 0, err
+func (b *bufferedReader) ReadUntil(delim byte) ([]byte, error) {
+	i := b.ind
+
+	defer func() {
+		if i == len(b.buffer) {
+			b.buffer = nil
+		} else {
+			b.buffer = b.buffer[i+1:]
 		}
-		if n == 0 {
-			return 0, io.EOF
-		}
-		b.max = n
 		b.ind = 0
+	}()
+
+	for counter := 0; counter <= 10000; counter++ {
+		if i >= len(b.buffer) {
+			b.buf1, b.buf2 = b.buf2, b.buf1
+			b.oldBuffer = b.buffer[b.ind:]
+			b.buffer = b.buf1
+
+			n, err := b.in.Read(b.buffer)
+			if err != nil {
+				return nil, err
+			}
+
+			b.buffer = b.buffer[:n]
+			b.ind = 0
+			i = 0
+		}
+
+		if b.buffer[i] != delim {
+			i++
+			continue
+		}
+
+		if len(b.oldBuffer) > 0 {
+			res := append(b.oldBuffer, b.buffer[:i]...)
+			b.oldBuffer = nil
+			return res, nil
+		}
+
+		return b.buffer[:i], nil
 	}
-	b.ind++
-	return b.buffer[b.ind-1], nil
+
+	return nil, fmt.Errorf("Zhopa")
 }
 
 type reader struct {
@@ -70,63 +109,52 @@ type reader struct {
 }
 
 func (r *reader) Next() (d linedata, err error) {
-	var b byte
+	var (
+		buf []byte
+		neg bool
+	)
+
 	start := time.Now()
 
-	defer func(start time.Time) {
-		r.timeLine += time.Since(start)
-	}(start)
-
-	for i := 0; i < 10000; i++ {
-		b, err = r.file.ReadByte()
-		if err != nil {
-			return
-		}
-
-		switch b {
-		case ';':
-			d.name = string(r.buffer)
-			r.buffer = r.buffer[:0]
-			continue
-		case '\n':
-			convStart := time.Now()
-
-			if d.name == "" {
-				continue
-			}
-			// "custom" atoi
-			var neg bool
-			buf := r.buffer
-			if buf[0] == '-' {
-				neg = true
-				buf = buf[1:]
-			}
-			switch len(buf) {
-			case 3:
-				d.value = int64(buf[0]-'0')*100 + int64(buf[1]-'0')*10 + int64(buf[2]-'0')
-			case 2:
-				d.value = int64(buf[0]-'0')*10 + int64(buf[1]-'0')
-			case 1:
-				d.value = int64(buf[0] - '0')
-			default:
-				err = fmt.Errorf("Wrong buffer len %d\"%s\"", len(buf), string(r.buffer))
-			}
-			if neg {
-				d.value = -d.value
-			}
-
-			r.buffer = r.buffer[:0]
-			convTime := time.Since(convStart)
-			r.timeConv += convTime
-			return
-		case ' ', '\t', '.':
-			continue
-		default:
-			r.buffer = append(r.buffer, b)
-		}
+	buf, err = r.file.ReadUntil(';')
+	if err != nil {
+		return
 	}
-	fmt.Println("Zhopa")
-	os.Exit(1)
+
+	i := 0
+	for buf[i] == ' ' || buf[i] == '\t' {
+		i++
+	}
+	d.name = string(buf[i])
+
+	buf, err = r.file.ReadUntil('\n')
+	if err != nil {
+		return
+	}
+
+	conv := time.Now()
+	// "atoi"
+	if buf[0] == '-' {
+		neg = true
+		buf = buf[1:]
+	}
+
+	switch len(buf) {
+	case 4:
+		d.value = int64(buf[0]-'0')*100 + int64(buf[1]-'0')*10 + int64(buf[3]-'0')
+	case 3:
+		d.value = int64(buf[0]-'0')*10 + int64(buf[2]-'0')
+	default:
+		err = fmt.Errorf("Wrong buffer len %d\"%s\"", len(buf), string(r.buffer))
+	}
+
+	if neg {
+		d.value = -d.value
+	}
+
+	r.timeLine += conv.Sub(start)
+	r.timeConv += time.Since(conv)
+
 	return
 }
 
@@ -148,6 +176,7 @@ func (c *calculator) Proccess() error {
 			}
 			return err
 		}
+
 		start := time.Now()
 
 		val := c.data[line.name]
