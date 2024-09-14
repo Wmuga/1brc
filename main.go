@@ -10,18 +10,25 @@ import (
 	"time"
 )
 
-const bufferSize = 4 * 1024 * 1024
+const (
+	bufferSize = 4 * 1024 * 1024
+
+	filename  = "measurements.txt"
+	filename2 = "output.csv"
+)
+
+var outFile *os.File
 
 type linedata struct {
 	name  string
-	value float64
+	value int64
 }
 
 type data struct {
-	min   float64
-	max   float64
-	avg   float64
-	cur   float64
+	min   int64
+	max   int64
+	avg   int64
+	cur   int64
 	count int64
 }
 
@@ -85,10 +92,10 @@ func (r *reader) Next() (d linedata, err error) {
 			if d.name == "" {
 				continue
 			}
-			d.value, err = strconv.ParseFloat(string(r.buffer), 64)
+			d.value, err = strconv.ParseInt(string(r.buffer), 10, 32)
 			r.buffer = r.buffer[:0]
 			return
-		case ' ', '\t':
+		case ' ', '\t', '.':
 			continue
 		default:
 			r.buffer = append(r.buffer, b)
@@ -132,16 +139,17 @@ func (c *calculator) Proccess() error {
 	start := time.Now()
 
 	for k, v := range c.data {
-		v.avg = v.cur / float64(v.count)
-		c.data[k] = v
+		v.avg = v.cur / v.count
+		fmt.Fprintf(outFile, "%s;%d.%d;%d.%d;%d.%d\n", k,
+			v.min/10, v.min%10,
+			v.avg/10, v.avg%10,
+			v.max/10, v.max%10)
 	}
 
 	c.timeCalc += time.Since(start)
 
 	return nil
 }
-
-const filename = "measurements.txt"
 
 func main() {
 	file, err := os.Open(filename)
@@ -150,6 +158,12 @@ func main() {
 		os.Exit(1)
 	}
 	defer file.Close()
+
+	outFile, err = os.Create(filename2)
+	if err != nil {
+		log.Println(err)
+		os.Exit(1)
+	}
 
 	r := &reader{file: NewBuffered(file)}
 	r.buffer = make([]byte, 0, 100)
@@ -160,5 +174,5 @@ func main() {
 		os.Exit(1)
 	}
 
-	fmt.Printf("read+convert = %s\nassign = %s\ncalc = %s\n", r.timeLineConv, calc.timeAssign, calc.timeCalc)
+	fmt.Printf("read+convert = %s\nassign = %s\ncalc+output = %s\n", r.timeLineConv, calc.timeAssign, calc.timeCalc)
 }
