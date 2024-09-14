@@ -6,7 +6,6 @@ import (
 	"io"
 	"log"
 	"os"
-	"strconv"
 	"time"
 )
 
@@ -27,7 +26,6 @@ type linedata struct {
 type data struct {
 	min   int64
 	max   int64
-	avg   int64
 	cur   int64
 	count int64
 }
@@ -65,16 +63,18 @@ func (b *bufferedReader) ReadByte() (byte, error) {
 }
 
 type reader struct {
-	file         *bufferedReader
-	buffer       []byte
-	timeLineConv time.Duration
+	file     *bufferedReader
+	buffer   []byte
+	timeLine time.Duration
+	timeConv time.Duration
 }
 
 func (r *reader) Next() (d linedata, err error) {
 	var b byte
 	start := time.Now()
+
 	defer func(start time.Time) {
-		r.timeLineConv += time.Since(start)
+		r.timeLine += time.Since(start)
 	}(start)
 
 	for i := 0; i < 10000; i++ {
@@ -89,11 +89,35 @@ func (r *reader) Next() (d linedata, err error) {
 			r.buffer = r.buffer[:0]
 			continue
 		case '\n':
+			convStart := time.Now()
+
 			if d.name == "" {
 				continue
 			}
-			d.value, err = strconv.ParseInt(string(r.buffer), 10, 32)
+			// "custom" atoi
+			var neg bool
+			buf := r.buffer
+			if buf[0] == '-' {
+				neg = true
+				buf = buf[1:]
+			}
+			switch len(buf) {
+			case 3:
+				d.value = int64(buf[0]-'0')*100 + int64(buf[1]-'0')*10 + int64(buf[2]-'0')
+			case 2:
+				d.value = int64(buf[0]-'0')*10 + int64(buf[1]-'0')
+			case 1:
+				d.value = int64(buf[0] - '0')
+			default:
+				err = fmt.Errorf("Wrong buffer len %d\"%s\"", len(buf), string(r.buffer))
+			}
+			if neg {
+				d.value = -d.value
+			}
+
 			r.buffer = r.buffer[:0]
+			convTime := time.Since(convStart)
+			r.timeConv += convTime
 			return
 		case ' ', '\t', '.':
 			continue
@@ -139,16 +163,23 @@ func (c *calculator) Proccess() error {
 	start := time.Now()
 
 	for k, v := range c.data {
-		v.avg = v.cur / v.count
+		avg := v.cur / v.count
 		fmt.Fprintf(outFile, "%s;%d.%d;%d.%d;%d.%d\n", k,
-			v.min/10, v.min%10,
-			v.avg/10, v.avg%10,
-			v.max/10, v.max%10)
+			v.min/10, abs(v.min)%10,
+			avg/10, abs(avg)%10,
+			v.max/10, abs(v.max)%10)
 	}
 
 	c.timeCalc += time.Since(start)
 
 	return nil
+}
+
+func abs(a int64) int64 {
+	if a < 0 {
+		return -a
+	}
+	return a
 }
 
 func main() {
@@ -174,5 +205,5 @@ func main() {
 		os.Exit(1)
 	}
 
-	fmt.Printf("read+convert = %s\nassign = %s\ncalc+output = %s\n", r.timeLineConv, calc.timeAssign, calc.timeCalc)
+	fmt.Printf("read = %s\nconv = %s\nassign = %s\ncalc+output = %s\n", r.timeLine-r.timeConv, r.timeConv, calc.timeAssign, calc.timeCalc)
 }

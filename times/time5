@@ -1,0 +1,8 @@
+read = 2m59.900784889s
+conv = 27.718528285s
+assign = 1m14.159849889s
+calc+output = 1.526142ms
+
+real    6m20,832s
+user    5m58,274s
+sys     0m9,632s
