@@ -1,7 +1,7 @@
 read = 2m31.080798363s
 convert = 2m18.673790883s
 assign = 1m25.076037082s
-calc = 1m25.076037082s
+calc = 1m52s
 
 real    8m6,023s
 user    7m25,056s

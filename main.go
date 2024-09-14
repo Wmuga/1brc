@@ -1,16 +1,16 @@
 package main
 
 import (
-	"bufio"
 	"errors"
 	"fmt"
 	"io"
 	"log"
 	"os"
 	"strconv"
-	"strings"
 	"time"
 )
+
+const bufferSize = 4 * 1024 * 1024
 
 type linedata struct {
 	name  string
@@ -25,35 +25,77 @@ type data struct {
 	count int64
 }
 
+type bufferedReader struct {
+	in     io.Reader
+	buffer []byte
+	ind    int
+	max    int
+}
+
+func NewBuffered(in io.Reader) *bufferedReader {
+	return &bufferedReader{
+		in:     in,
+		buffer: make([]byte, bufferSize),
+		ind:    bufferSize,
+		max:    bufferSize,
+	}
+}
+
+func (b *bufferedReader) ReadByte() (byte, error) {
+	if b.ind == b.max {
+		n, err := b.in.Read(b.buffer)
+		if err != nil {
+			return 0, err
+		}
+		if n == 0 {
+			return 0, io.EOF
+		}
+		b.max = n
+		b.ind = 0
+	}
+	b.ind++
+	return b.buffer[b.ind-1], nil
+}
+
 type reader struct {
-	file        *bufio.Reader
-	timeLine    time.Duration
-	timeConvert time.Duration
+	file         *bufferedReader
+	buffer       []byte
+	timeLineConv time.Duration
 }
 
 func (r *reader) Next() (d linedata, err error) {
-	var line string
-
+	var b byte
 	start := time.Now()
-	for line == "" {
-		line, err = r.file.ReadString('\n')
+	defer func(start time.Time) {
+		r.timeLineConv += time.Since(start)
+	}(start)
+
+	for i := 0; i < 10000; i++ {
+		b, err = r.file.ReadByte()
 		if err != nil {
-			return d, err
+			return
 		}
-		line = strings.TrimSpace(line)
+
+		switch b {
+		case ';':
+			d.name = string(r.buffer)
+			r.buffer = r.buffer[:0]
+			continue
+		case '\n':
+			if d.name == "" {
+				continue
+			}
+			d.value, err = strconv.ParseFloat(string(r.buffer), 64)
+			r.buffer = r.buffer[:0]
+			return
+		case ' ', '\t':
+			continue
+		default:
+			r.buffer = append(r.buffer, b)
+		}
 	}
-
-	split := time.Now()
-
-	splitData := strings.Split(line, ";")
-	d.name = splitData[0]
-	d.value, err = strconv.ParseFloat(splitData[1], 64)
-
-	end := time.Now()
-
-	r.timeLine += split.Sub(start)
-	r.timeConvert += end.Sub(split)
-
+	fmt.Println("Zhopa")
+	os.Exit(1)
 	return
 }
 
@@ -107,10 +149,16 @@ func main() {
 		log.Println(err)
 		os.Exit(1)
 	}
+	defer file.Close()
 
-	r := &reader{file: bufio.NewReader(file)}
+	r := &reader{file: NewBuffered(file)}
+	r.buffer = make([]byte, 0, 100)
 	calc := &calculator{r: r}
-	calc.Proccess()
+	err = calc.Proccess()
+	if err != nil {
+		log.Println(err)
+		os.Exit(1)
+	}
 
-	fmt.Printf("read = %s\nnconvert = %s\nassign = %s\ncalc = %s\n", r.timeLine, r.timeConvert, calc.timeAssign, calc.timeAssign)
+	fmt.Printf("read+convert = %s\nassign = %s\ncalc = %s\n", r.timeLineConv, calc.timeAssign, calc.timeCalc)
 }
