@@ -160,14 +160,14 @@ func (r *reader) Next() (d linedata, err error) {
 
 type calculator struct {
 	r    *reader
-	data map[string]data
+	data map[string]*data
 
 	timeAssign time.Duration
 	timeCalc   time.Duration
 }
 
 func (c *calculator) Proccess() error {
-	c.data = map[string]data{}
+	c.data = map[string]*data{}
 	for {
 		line, err := c.r.Next()
 		if err != nil {
@@ -179,12 +179,23 @@ func (c *calculator) Proccess() error {
 
 		start := time.Now()
 
-		val := c.data[line.name]
-		val.cur += line.value
-		val.min = min(val.min, line.value)
-		val.max = max(val.max, line.value)
-		val.count++
-		c.data[line.name] = val
+		val, ok := c.data[line.name]
+		if ok {
+			val.cur += line.value
+			val.count++
+			if line.value < val.min {
+				val.min = min(val.min, line.value)
+			} else if line.value > val.max {
+				val.max = max(val.max, line.value)
+			}
+		} else {
+			c.data[line.name] = &data{
+				cur:   line.value,
+				min:   line.value,
+				max:   line.value,
+				count: 1,
+			}
+		}
 
 		c.timeAssign += time.Since(start)
 	}
